@@ -40,14 +40,18 @@ displayio.release_displays()
 # This pinout works on a Feather M4 and may need to be altered for other boards.
 spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
 zipcode = '02210' # This is the zip code it will report weather for
+show_current_temp = None
+show_feels_like_temp = None
 
 def main():
     ink = Ink()
+    ink.draw_all()
     time.sleep(1)
     weather = NetWeather()
     time.sleep(1)
     while 1:
         weather.fetch_weather()
+        ink.draw_all()
         time.sleep(30 * 60)
 
 
@@ -62,7 +66,7 @@ class Ink:
         )
         time.sleep(1)
          
-        display = adafruit_il0373.IL0373(
+        self.display = adafruit_il0373.IL0373(
             display_bus,
             width=296,
             height=128,
@@ -73,17 +77,31 @@ class Ink:
             refresh_time=1,
         )
 
-        g = displayio.Group()
 
-        f = open("/images/pin2b.bmp", "rb")
+        f = open("/images/pin2c.bmp", "rb")
         pic = displayio.OnDiskBitmap(f)
-        t2 = displayio.TileGrid(pic, pixel_shader=displayio.ColorConverter())
+        self.pinback1 = displayio.TileGrid(pic, pixel_shader=displayio.ColorConverter())
+        self.numbers22 = numbers_from_bmp('/images/numbers22x165.bmp', 8, 15)
+        self.numbers17 = numbers_from_bmp('/images/numbers17x127.bmp', 6, 12)
+        self.numbers11 = numbers_from_bmp('/images/numbers11x82.bmp', 2, 8)
 
-        t8 = tile_from_bmp('/images/icon_suncloud64_8.bmp')
-        g.append(t2)
+#        t8 = tile_from_bmp('/images/icon_suncloud64_8.bmp')
 
-        display.show(g)
-        display.refresh()
+    def draw_all(self):
+        g = displayio.Group()
+        g.append(self.pinback1)
+
+        self.draw_number(show_current_temp, 50, 50, self.numbers22, g)
+
+        self.display.show(g)
+        self.display.refresh()
+        g = None
+        gc.collect()
+
+    def draw_number(self, val, x, y, font, group):
+#        if val is not None:
+        group.append(font[2])
+
 
 
 
@@ -155,6 +173,9 @@ class NetWeather:
             out_str += ' {}'.format(item['weather'][0]['description'])
             print(out_str)
 
+        show_current_temp = round(wnow['main']['temp'])
+        show_feels_like_temp = round(wnow['main']['feels_like'])
+
         wnow = None
         wone = None
         gc.collect()
@@ -206,20 +227,47 @@ def tile_from_bmp(file_name):
     bm = displayio.Bitmap(dbm.width, dbm.height, 4)
     for y in range(dbm.height):
         for x in range(dbm.width):
-            p = dpal[dbm[x, y]] & 0x00ff
-            if p < 0x60:
-                p = 0
-            elif p < 0x90:
-                p = 1
-            elif p < 0xff:
-                p = 2
-            else:
-                p = 3
-            bm[x, y] = p
+            bm[x, y] = gray_256_to_4(dpal[dbm[x, y]] & 0x00ff)
     dbm = None
     dpal = None
     gc.collect()
     return displayio.TileGrid(bm, pixel_shader=pal7)
 
+def gray_256_to_4(p):
+    if p < 0x60:
+        return 0
+    elif p < 0x90:
+        return 1
+    elif p < 0xff:
+        return 2
+    return 3
+
+def numbers_from_bmp(file_name, minus_width, digit_width):
+    pal7 = displayio.Palette(4)
+    pal7[0] = 0x000000
+    pal7[1] = 0x606060
+    pal7[2] = 0x909090
+    pal7[3] = 0xffffff
+    pal7.make_transparent(3)
+    dbm, dpal = adafruit_imageload.load(file_name,
+                                        bitmap=displayio.Bitmap,
+                                        palette=displayio.Palette)
+    numbers = {}
+    bm = displayio.Bitmap(dbm.width, minus_width, 4)
+    for y in range(bm.height):
+        for x in range(bm.width):
+            bm[x, y] = gray_256_to_4(dpal[dbm[x, y]] & 0x00ff)
+    numbers['-'] = numbers[-1] = displayio.TileGrid(bm, pixel_shader=pal7)
+    for digit in range(10):
+        bm = displayio.Bitmap(dbm.width, digit_width, 4)
+        for y in range(bm.height):
+            for x in range(bm.width):
+                bm[x, y] = gray_256_to_4(dpal[dbm[x, y + digit * digit_width + minus_width]] & 0x00ff)
+        numbers[str(digit)] = numbers[digit] = displayio.TileGrid(bm, pixel_shader=pal7)
+
+    dbm = None
+    dpal = None
+    gc.collect()
+    return numbers
 
 main()

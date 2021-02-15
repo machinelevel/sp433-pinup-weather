@@ -22,62 +22,29 @@ my notes:
 is_magtag = True
 use_magtag_lib = False
 
-def check_display(msg, do_loop=4):
-    while do_loop > 0:
-        print('Display:', msg, do_loop)
-        print(type(board.DISPLAY))
-        print(board.DISPLAY)
-        time.sleep(board.DISPLAY.time_to_refresh)
-        while board.DISPLAY.busy:
-            time.sleep(1)
-        time.sleep(board.DISPLAY.time_to_refresh)
-        board.DISPLAY.refresh()
-        do_loop -= 1
-    print('...ok!')
-
-"""
-# This sample causes a refresh! May need to reset board first
-import board
-import time
-import displayio
-#displayio.release_displays()
-
-display = board.DISPLAY
-print(display)
-time.sleep(display.time_to_refresh)
-time.sleep(display.time_to_refresh)
-display.refresh()
-print('ok!')
-"""
-
 import time
 import adafruit_imageload
 
-if use_magtag_lib:
-    from adafruit_magtag.magtag import MagTag
+import busio
+import board
+import analogio
+import gc
+import neopixel
+if is_magtag:
+    import ipaddress
+    import ssl
+    import wifi
+    import socketpool
+    import adafruit_requests
 else:
-    import busio
-    import board
-#    check_display(39)
-    import analogio
-    import gc
-    import neopixel
-    if is_magtag:
-        import ipaddress
-        import ssl
-        import wifi
-        import socketpool
-        import adafruit_requests
-    else:
-        import adafruit_il0373
-        import adafruit_esp32spi.adafruit_esp32spi_socket as socket
-        from adafruit_esp32spi import adafruit_esp32spi
-        # This pinout works on a Feather M4 and may need to be altered for other boards.
-        spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
-        import adafruit_requests as requests
-    from digitalio import DigitalInOut
-    pixels = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.2, auto_write=True)
-#    check_display(51)
+    import adafruit_il0373
+    import adafruit_esp32spi.adafruit_esp32spi_socket as socket
+    from adafruit_esp32spi import adafruit_esp32spi
+    spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
+    import adafruit_requests as requests
+
+from digitalio import DigitalInOut
+pixels = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.2, auto_write=True)
 
 try:
     from secrets import secrets
@@ -86,21 +53,15 @@ except ImportError:
     raise
 
 import displayio
-#displayio.release_displays()
+if not is_magtag:
+    displayio.release_displays()
 
 zipcode = '02210' # This is the zip code it will report weather for
 
 def main():
-    if use_magtag_lib:
-        magtag = MagTag()
-    else:
-        magtag = None
-
-    ink = Ink(magtag)
-#    ink.draw_all(None)
-    time.sleep(1)
+    ink = Ink()
+    ink.draw_all(None)
     weather = NetWeather()
-#    weather = None
     time.sleep(1)
     while 1:
         weather.fetch_weather()
@@ -110,34 +71,18 @@ def main():
 
 
 class Ink:
-    def __init__(self, magtag):
+    def __init__(self, ):
         print('initializing ink...')
-        self.magtag = magtag
-        if self.magtag:
-            print('>>>>>>>>>>>>>')
-            print(type(magtag.graphics))
-            print(type(magtag.graphics.display))
-            pass
-        elif is_magtag:
-            epd_cs = board.EPD_CS
-            epd_dc = board.EPD_DC
-        else:
-            epd_cs = board.D9
-            epd_dc = board.D10
-#        self.batt_pin = analogio.AnalogIn(board.A5)
+        self.batt_pin = analogio.AnalogIn(board.VOLTAGE_MONITOR)
         
         if is_magtag:
             self.display = board.DISPLAY
             time.sleep(self.display.time_to_refresh)
-            time.sleep(self.display.time_to_refresh)
-            self.display.refresh()
-            time.sleep(self.display.time_to_refresh)
-            time.sleep(self.display.time_to_refresh)
-            self.display.refresh()
-            time.sleep(self.display.time_to_refresh)
-            time.sleep(self.display.time_to_refresh)
-            print('at 110')
+            while self.display.busy:
+                time.sleep(0.5)
         else:
+            epd_cs = board.D9
+            epd_dc = board.D10
             display_bus = displayio.FourWire(
                 spi, command=epd_dc, chip_select=epd_cs, baudrate=1000000
             )
@@ -193,13 +138,18 @@ class Ink:
         self.draw_battery_level(g)
 
         self.display.show(g)
-        self.display.refresh()
+        self.refresh()
         print('  ...draw done.')
         g = None
         gc.collect()
 
+    def refresh(self):
+        self.display.refresh()
+        time.sleep(self.display.time_to_refresh)
+        while self.display.busy:
+            time.sleep(0.5)
+
     def draw_battery_level(self, g):
-        return
         battery_voltage = (self.batt_pin.value * 3.3) / 65536 * 2
         print("VBat voltage: {:.2f}".format(battery_voltage))
         x = 0

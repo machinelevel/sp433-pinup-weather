@@ -58,20 +58,26 @@ if use_magtag_lib:
 else:
     import busio
     import board
-    check_display(39)
+#    check_display(39)
     import analogio
     import gc
     import neopixel
-    if not is_magtag:
+    if is_magtag:
+        import ipaddress
+        import ssl
+        import wifi
+        import socketpool
+        import adafruit_requests
+    else:
         import adafruit_il0373
-        import adafruit_requests as requests
         import adafruit_esp32spi.adafruit_esp32spi_socket as socket
         from adafruit_esp32spi import adafruit_esp32spi
         # This pinout works on a Feather M4 and may need to be altered for other boards.
         spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
+        import adafruit_requests as requests
     from digitalio import DigitalInOut
     pixels = neopixel.NeoPixel(board.NEOPIXEL, 1, brightness=0.2, auto_write=True)
-    check_display(51)
+#    check_display(51)
 
 try:
     from secrets import secrets
@@ -93,11 +99,11 @@ def main():
     ink = Ink(magtag)
 #    ink.draw_all(None)
     time.sleep(1)
-#    weather = NetWeather()
-    weather = None
+    weather = NetWeather()
+#    weather = None
     time.sleep(1)
     while 1:
-#        weather.fetch_weather()
+        weather.fetch_weather()
         pixels[0] = (0,0,0)
         ink.draw_all(weather)
         time.sleep(15 * 60)
@@ -311,42 +317,61 @@ class NetWeather:
         self.updated_weekday = 0
         self.updated_month = 1
         self.updated_monthday = 0
-        return
+
         if is_magtag:
-            esp32_cs = DigitalInOut(board.ESP_CS)
-            esp32_ready = DigitalInOut(board.ESP_BUSY)
-            esp32_reset = DigitalInOut(board.ESP_RESET)
+            self.radio = wifi.radio
+
+            print("My MAC addr:", [hex(i) for i in wifi.radio.mac_address])
+             
+            print("Available WiFi networks:")
+            for network in wifi.radio.start_scanning_networks():
+                print("\t%s\t\tRSSI: %d\tChannel: %d" % (str(network.ssid, "utf-8"),
+                        network.rssi, network.channel))
+            wifi.radio.stop_scanning_networks()
+             
+            print("Connecting to %s"%secrets["ssid"])
+            wifi.radio.connect(secrets["ssid"], secrets["password"])
+            print("Connected to %s!"%secrets["ssid"])
+            print("My IP address is", wifi.radio.ipv4_address)
+             
+            ipv4 = ipaddress.ip_address("8.8.4.4")
+            print("Ping google.com: %f ms" % (wifi.radio.ping(ipv4)*1000))
+             
+            pool = socketpool.SocketPool(wifi.radio)
+            self.requests = adafruit_requests.Session(pool, ssl.create_default_context())
+
         else:
             esp32_cs = DigitalInOut(board.D13)
             esp32_ready = DigitalInOut(board.D11)
             esp32_reset = DigitalInOut(board.D12)
-        self.esp = adafruit_esp32spi.ESP_SPIcontrol(spi, esp32_cs, esp32_ready, esp32_reset)
-        requests.set_socket(socket, self.esp)
-        if self.esp.status == adafruit_esp32spi.WL_IDLE_STATUS:
-            print("ESP32 found and in idle mode")
-        print("Firmware vers.", self.esp.firmware_version)
-        print("MAC addr:", [hex(i) for i in self.esp.MAC_address])
-        for ap in self.esp.scan_networks():
-            print("\t%s\t\tRSSI: %d" % (str(ap["ssid"], "utf-8"), ap["rssi"]))
+            self.radio = adafruit_esp32spi.ESP_SPIcontrol(spi, esp32_cs, esp32_ready, esp32_reset)
+            requests.set_socket(socket, self.radio)
+            self.requests = requests
+            if self.radio.status == adafruit_esp32spi.WL_IDLE_STATUS:
+                print("ESP32 found and in idle mode")
+            print("Firmware vers.", self.radio.firmware_version)
+            print("MAC addr:", [hex(i) for i in self.radio.MAC_address])
+            for ap in self.radio.scan_networks():
+                print("\t%s\t\tRSSI: %d" % (str(ap["ssid"], "utf-8"), ap["rssi"]))
 
-        print("Connecting to AP...")
-        while not self.esp.is_connected:
-            try:
-                self.esp.connect_AP(secrets["ssid"], secrets["password"])
-            except RuntimeError as e:
-                print("could not connect to AP, retrying: ", e)
-                continue
-        print("Connected to", str(self.esp.ssid, "utf-8"), "\tRSSI:", self.esp.rssi)
-        print("My IP address is", self.esp.pretty_ip(self.esp.ip_address))
+            print("Connecting to AP...")
+            while not self.radio.is_connected:
+                try:
+                    self.radio.connect_AP(secrets["ssid"], secrets["password"])
+                except RuntimeError as e:
+                    print("could not connect to AP, retrying: ", e)
+                    continue
+            print("Connected to", str(self.radio.ssid, "utf-8"), "\tRSSI:", self.radio.rssi)
+            print("My IP address is", self.radio.pretty_ip(self.radio.ip_address))
 
     def fetch_text(self, url):
-        r = requests.get(url)
+        r = self.requests.get(url)
         result = r.text
         r.close()
         return result
 
     def fetch_json(self, url):
-        r = requests.get(url)
+        r = self.requests.get(url)
         result = r.json()
         r.close()
         return result

@@ -5,6 +5,7 @@ by Eric and Sue Johnston, inventions@machinelevel.com
 
 This program was written for the Adafruit Feather
 with 2.9" grayscale ans ESP Wifi
+...and then it was migrated to MagTag
 
 License:
     Officially: MIT license
@@ -16,7 +17,7 @@ License:
 my notes:
 # deep sleep: https://learn.adafruit.com/deep-sleep-with-circuitpython
 # best magtag wifi sample: https://learn.adafruit.com/magtag-progress-displays?view=all
-
+# sleep notes here: https://learn.adafruit.com/deep-sleep-with-circuitpython/alarms-and-sleep
 """
 
 is_magtag = True
@@ -71,10 +72,21 @@ def main():
 
 
 class Ink:
-    def __init__(self, ):
+    def __init__(self):
         print('initializing ink...')
         self.batt_pin = analogio.AnalogIn(board.VOLTAGE_MONITOR)
-        
+        self.icon_table = {
+            '01d':8, '01n':0, #     clear sky
+            '02d':7, '02n':6, #     few clouds
+            '03d':7, '03n':6, #     scattered clouds
+            '04d':6, '04n':6, #     broken clouds
+            '09d':5, '09n':5, #     shower rain
+            '10d':5, '10n':5, #     rain
+            '11d':4, '11n':4, #     thunderstorm
+            '13d':3, '13n':3, #     snow
+            '50d':2, '50n':2, #     mist
+        }
+
         if is_magtag:
             self.display = board.DISPLAY
             time.sleep(self.display.time_to_refresh)
@@ -99,7 +111,7 @@ class Ink:
             )
 
 
-        f = open("/images/pin2d.bmp", "rb")
+        f = open("/images/pin2e.bmp", "rb")
         self.pinback1 = displayio.OnDiskBitmap(f)
         self.numbers22 = self.numbers_from_bmp('/images/numbers22x165.bmp', '-0123456789', [0,8,25,40,56,71,87,103,118,134,149,165])
         self.numbers17 = self.numbers_from_bmp('/images/numbers17x127.bmp', '-0123456789', [0,6,19,31,43,54,67, 79, 91,103,114,127])
@@ -107,6 +119,7 @@ class Ink:
         self.weekdays11 = self.numbers_from_bmp('/images/weekdays11x174.bmp', '0123456', [0,31,55,85,112,131,155,174])
         self.months11 = self.numbers_from_bmp('/images/months11x294.bmp', '0123456789abc', [0,0,22,44,73,98,126,149,170,197,220,244,272,294])
         self.batt20 = self.numbers_from_bmp('/images/batt20x118.bmp', '012c', [0,28,58,87,118])
+        self.wicons40 = self.numbers_from_bmp('/images/wicons40x347.bmp', '012345678', [0,346-314,346-278,346-241,346-203,346-160,346-121,346-82,346-38,346-0])
         self.palette1 = displayio.Palette(4)
         self.palette1[0] = 0x000000
         self.palette1[1] = 0x606060
@@ -127,13 +140,20 @@ class Ink:
         if weather is not None:
             self.draw_number(weather.show_current_temp, 140, 80, self.numbers22, g)
             self.draw_number(weather.show_feels_like_temp, 116, 90, self.numbers17, g)
-            x = 50
-            y = 0
+            x = 22
+            y = 64
             y = self.draw_number(weather.updated_hour, x, y, self.numbers11, g)
             y = self.draw_number(weather.updated_minute, x, y + 5, self.numbers11, g)
+            x = 11
+            y = 64
             y = self.draw_index([weather.updated_weekday], x, y + 5, self.weekdays11, g)
-            y = self.draw_index([weather.updated_month], x, y + 5, self.months11, g)
-            y = self.draw_number(weather.updated_monthday, x, y + 5, self.numbers11, g)
+            if 0:
+                y = self.draw_index([weather.updated_month], x, y + 5, self.months11, g)
+                y = self.draw_number(weather.updated_monthday, x, y + 5, self.numbers11, g)
+
+            x = 50
+            y = 2
+            y = self.draw_weather_icon(x, y, weather, g)
 
         self.draw_battery_level(g)
 
@@ -149,12 +169,31 @@ class Ink:
         while self.display.busy:
             time.sleep(0.5)
 
+    def draw_weather_icon(self, x, y, weather, g):
+        if weather is not None:
+            if weather.show_icon in self.icon_table:
+                icon_index = self.icon_table[weather.show_icon]
+                y = self.draw_index([icon_index], x, y, self.wicons40, g)
+        return y
+
     def draw_battery_level(self, g):
+        # Voltages observed:
+        # 2.66 = out of gas, shut down
         battery_voltage = (self.batt_pin.value * 3.3) / 65536 * 2
         print("VBat voltage: {:.2f}".format(battery_voltage))
         x = 0
         y = 0
-        y = self.draw_index([2], x, y, self.batt20, g)
+        batt_low = 0
+        batt_mid = 1
+        batt_high = 2
+        batt_charge = 3
+        if battery_voltage < 2.9:
+            image = batt_low
+        elif battery_voltage < 3.7:
+            image = batt_mid
+        else:
+            image = batt_high
+        y = self.draw_index([image], x, y, self.batt20, g)
         y = self.draw_number(int(battery_voltage * 100), x, y + 5, self.numbers11, g)
 
 
@@ -267,25 +306,27 @@ class NetWeather:
         self.updated_weekday = 0
         self.updated_month = 1
         self.updated_monthday = 0
+        self.show_icon = None
 
         if is_magtag:
             self.radio = wifi.radio
 
-            print("My MAC addr:", [hex(i) for i in wifi.radio.mac_address])
-             
-            print("Available WiFi networks:")
-            for network in wifi.radio.start_scanning_networks():
-                print("\t%s\t\tRSSI: %d\tChannel: %d" % (str(network.ssid, "utf-8"),
-                        network.rssi, network.channel))
-            wifi.radio.stop_scanning_networks()
+            if 0:
+                print("My MAC addr:", [hex(i) for i in wifi.radio.mac_address])
+                print("Available WiFi networks:")
+                for network in wifi.radio.start_scanning_networks():
+                    print("\t%s\t\tRSSI: %d\tChannel: %d" % (str(network.ssid, "utf-8"),
+                            network.rssi, network.channel))
+                wifi.radio.stop_scanning_networks()
              
             print("Connecting to %s"%secrets["ssid"])
             wifi.radio.connect(secrets["ssid"], secrets["password"])
             print("Connected to %s!"%secrets["ssid"])
             print("My IP address is", wifi.radio.ipv4_address)
-             
-            ipv4 = ipaddress.ip_address("8.8.4.4")
-            print("Ping google.com: %f ms" % (wifi.radio.ping(ipv4)*1000))
+
+            if 0:
+                ipv4 = ipaddress.ip_address("8.8.4.4")
+                print("Ping google.com: %f ms" % (wifi.radio.ping(ipv4)*1000))
              
             pool = socketpool.SocketPool(wifi.radio)
             self.requests = adafruit_requests.Session(pool, ssl.create_default_context())
@@ -348,6 +389,7 @@ class NetWeather:
             print('  wind: {} mph'.format(round(0.621371 * wnow['wind']['speed'])))
             self.show_current_temp = round(wnow['main']['temp'])
             self.show_feels_like_temp = round(wnow['main']['feels_like'])
+            self.show_icon = wnow['weather'][0]['icon']
             self.updated_hour = time_now.tm_hour
             self.updated_minute = time_now.tm_min
             self.updated_weekday = time_now.tm_wday

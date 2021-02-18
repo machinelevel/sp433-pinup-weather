@@ -115,11 +115,11 @@ class Ink:
         self.pinback1 = displayio.OnDiskBitmap(f)
         self.numbers22 = self.numbers_from_bmp('/images/numbers22x165.bmp', '-0123456789', [0,8,25,40,56,71,87,103,118,134,149,165])
         self.numbers17 = self.numbers_from_bmp('/images/numbers17x127.bmp', '-0123456789', [0,6,19,31,43,54,67, 79, 91,103,114,127])
-        self.numbers11 = self.numbers_from_bmp('/images/numbers11x82.bmp',  '-0123456789', [0,3,12,19,27,34,43, 50, 58, 66, 73, 81])
-        self.weekdays11 = self.numbers_from_bmp('/images/weekdays11x174.bmp', '0123456', [0,31,55,85,112,131,155,174])
+        self.numbers11 = self.numbers_from_bmp('/images/numbers11x82.bmp',  '-0123456789', [0,3,12,19,28,34,43, 50, 58, 66, 73, 81])
+        self.weekdays11 = self.numbers_from_bmp('/images/weekdays11x174.bmp', '0123456', [0,31,55,83,112,131,155,174])
         self.months11 = self.numbers_from_bmp('/images/months11x294.bmp', '0123456789abc', [0,0,22,44,73,98,126,149,170,197,220,244,272,294])
-        self.batt20 = self.numbers_from_bmp('/images/batt20x118.bmp', '012c', [0,28,58,87,118])
-        self.wicons40 = self.numbers_from_bmp('/images/wicons40x347.bmp', '012345678', [0,346-314,346-278,346-241,346-203,346-160,346-121,346-82,346-38,346-0])
+        self.batt20 = self.numbers_from_bmp('/images/batt20x118.bmp', '0xyz2c', [0,28,37,38,58,87,118])
+        self.wicons40 = self.numbers_from_bmp('/images/wicons40x347.bmp', '012345678', [0,346-312,346-276,346-241,346-203,346-160,346-121,346-82,346-38,346-0])
         self.palette1 = displayio.Palette(4)
         self.palette1[0] = 0x000000
         self.palette1[1] = 0x606060
@@ -140,11 +140,11 @@ class Ink:
         if weather is not None:
             self.draw_number(weather.show_current_temp, 140, 80, self.numbers22, g)
             self.draw_number(weather.show_feels_like_temp, 116, 90, self.numbers17, g)
-            x = 22
+            x = 12
             y = 64
             y = self.draw_number(weather.updated_hour, x, y, self.numbers11, g)
-            y = self.draw_number(weather.updated_minute, x, y + 5, self.numbers11, g)
-            x = 11
+            y = self.draw_number(weather.updated_minute, x, y + 5, self.numbers11, g, pad0=True)
+            x = 1
             y = 64
             y = self.draw_index([weather.updated_weekday], x, y + 5, self.weekdays11, g)
             if 0:
@@ -154,6 +154,10 @@ class Ink:
             x = 50
             y = 2
             y = self.draw_weather_icon(x, y, weather, g)
+
+            x = 40
+            y = 70
+            y = self.draw_wind(x, y, weather, g)
 
         self.draw_battery_level(g)
 
@@ -176,29 +180,39 @@ class Ink:
                 y = self.draw_index([icon_index], x, y, self.wicons40, g)
         return y
 
+    def draw_wind(self, x, y, weather, g):
+        if weather is not None:
+            if weather.show_wind_mph >= 2:
+                y = self.draw_index([1], x, y, self.wicons40, g)
+                y = self.draw_number(weather.show_wind_mph, x+5, y-2, self.numbers17, g)
+        return y
+
     def draw_battery_level(self, g):
         # Voltages observed:
         # 2.66 = out of gas, shut down
+        # 4.21 is all charged and plugged in
         battery_voltage = (self.batt_pin.value * 3.3) / 65536 * 2
         print("VBat voltage: {:.2f}".format(battery_voltage))
         x = 0
         y = 0
         batt_low = 0
-        batt_mid = 1
-        batt_high = 2
-        batt_charge = 3
-        if battery_voltage < 2.9:
-            image = batt_low
-        elif battery_voltage < 3.7:
-            image = batt_mid
-        else:
-            image = batt_high
-        y = self.draw_index([image], x, y, self.batt20, g)
-        y = self.draw_number(int(battery_voltage * 100), x, y + 5, self.numbers11, g)
+        batt_fill = 2
+        t = (battery_voltage - 2.9) / (4.2 - 2.9)
+        if t > 1.0:
+            t = 1.0
+        fill_count = round(16 * t)
+        self.draw_index([batt_low], x, y, self.batt20, g)
+        for fillpos in range(fill_count):
+            self.draw_index([batt_fill], x, y+7+fillpos, self.batt20, g) #14 segs?
+        if 0:
+            y = self.draw_number(int(battery_voltage * 100), x, y + 5, self.numbers11, g)
 
 
-    def draw_number(self, val, x, y, font, group):        
+    def draw_number(self, val, x, y, font, group, pad0=False):        
         if val is not None:
+            strval = str(val)
+            if pad0 and val < 10:
+                strval = '0' + strval
             for ch in str(val):
                 bm = font[ch]
                 tile = displayio.TileGrid(bm, pixel_shader=self.palette1, x=x, y=y)
@@ -206,7 +220,7 @@ class Ink:
                 y += bm.height
         return y
 
-    def draw_index(self, val, x, y, font, group):        
+    def draw_index(self, val, x, y, font, group):
         if val is not None:
             for i in val:
                 bm = font[i]
@@ -307,6 +321,7 @@ class NetWeather:
         self.updated_month = 1
         self.updated_monthday = 0
         self.show_icon = None
+        self.show_wind_mph = 0
 
         if is_magtag:
             self.radio = wifi.radio
@@ -390,6 +405,7 @@ class NetWeather:
             self.show_current_temp = round(wnow['main']['temp'])
             self.show_feels_like_temp = round(wnow['main']['feels_like'])
             self.show_icon = wnow['weather'][0]['icon']
+            self.show_wind_mph = round(0.621371 * wnow['wind']['speed'])
             self.updated_hour = time_now.tm_hour
             self.updated_minute = time_now.tm_min
             self.updated_weekday = time_now.tm_wday

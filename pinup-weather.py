@@ -21,10 +21,10 @@ my notes:
 """
 
 is_magtag = True
-use_magtag_lib = False
 
 import time
 import adafruit_imageload
+import alarm
 
 import busio
 import board
@@ -61,15 +61,25 @@ zipcode = '02210' # This is the zip code it will report weather for
 
 def main():
     ink = Ink()
-    ink.draw_all(None)
     weather = NetWeather()
-    time.sleep(1)
-    while 1:
-        weather.fetch_weather()
-        pixels[0] = (0,0,0)
+    pixels[0] = (0,0,0)
+    try:
+        weather.fetch_weather(get_hourly=False)
         ink.draw_all(weather)
-        time.sleep(15 * 60)
+    except:
+        print('error fetching or drawing. Will sleep now, try again later.')
+    do_deep_sleep(weather)
 
+def do_deep_sleep(weather):
+    sleep_seconds = 1 * 60
+    if weather is not None and weather.got_weather_ok:
+        current_minute = weather.updated_minute
+        time_till_next_15 = 15 - (current_minute % 15)
+        if time_till_next_15 == 0:
+            time_till_next_15 = 15
+        print('current min {}, so sleep for {} minutes'.format(current_minute, time_till_next_15))
+    time_alarm = alarm.time.TimeAlarm(monotonic_time=time.monotonic() + time_till_next_15 * 60)
+    alarm.exit_and_deep_sleep_until_alarms(time_alarm)
 
 class Ink:
     def __init__(self):
@@ -115,11 +125,11 @@ class Ink:
         self.pinback1 = displayio.OnDiskBitmap(f)
         self.numbers22 = self.numbers_from_bmp('/images/numbers22x165.bmp', '-0123456789', [0,8,25,40,56,71,87,103,118,134,149,165])
         self.numbers17 = self.numbers_from_bmp('/images/numbers17x127.bmp', '-0123456789', [0,6,19,31,43,54,67, 79, 91,103,114,127])
-        self.numbers11 = self.numbers_from_bmp('/images/numbers11x82.bmp',  '-0123456789', [0,3,12,19,28,34,43, 50, 58, 66, 73, 81])
-        self.weekdays11 = self.numbers_from_bmp('/images/weekdays11x174.bmp', '0123456', [0,31,55,83,112,131,155,174])
+        self.numbers11 = self.numbers_from_bmp('/images/numbers11x82.bmp',  '-0123456789', [0,3,12,19,28,35,43, 50, 58, 66, 73, 82])
+        self.weekdays11 = self.numbers_from_bmp('/images/weekdays11x174.bmp', '0123456', [0,31,55,83,110,127,151,174])
         self.months11 = self.numbers_from_bmp('/images/months11x294.bmp', '0123456789abc', [0,0,22,44,73,98,126,149,170,197,220,244,272,294])
         self.batt20 = self.numbers_from_bmp('/images/batt20x118.bmp', '0xyz2c', [0,28,37,38,58,87,118])
-        self.wicons40 = self.numbers_from_bmp('/images/wicons40x347.bmp', '012345678', [0,346-312,346-276,346-241,346-203,346-160,346-121,346-82,346-38,346-0])
+        self.wicons40 = self.numbers_from_bmp('/images/wicons40x347.bmp', '012345678', [0,346-312,346-276,348-241,348-203,346-160,346-121,346-82,346-38,346-0])
         self.palette1 = displayio.Palette(4)
         self.palette1[0] = 0x000000
         self.palette1[1] = 0x606060
@@ -156,7 +166,7 @@ class Ink:
             y = self.draw_weather_icon(x, y, weather, g)
 
             x = 40
-            y = 70
+            y = 64
             y = self.draw_wind(x, y, weather, g)
 
         self.draw_battery_level(g)
@@ -184,7 +194,7 @@ class Ink:
         if weather is not None:
             if weather.show_wind_mph >= 2:
                 y = self.draw_index([1], x, y, self.wicons40, g)
-                y = self.draw_number(weather.show_wind_mph, x+5, y-2, self.numbers17, g)
+                y = self.draw_number(weather.show_wind_mph, x+1, y-1, self.numbers17, g)
         return y
 
     def draw_battery_level(self, g):
@@ -313,6 +323,7 @@ class NetWeather:
     def __init__(self):
         print('initializing weather...')
         print(dir(board))
+        self.got_weather_ok = False
         self.show_current_temp = 0
         self.show_feels_like_temp = 0
         self.updated_hour = 0
@@ -382,7 +393,7 @@ class NetWeather:
         r.close()
         return result
 
-    def fetch_weather(self):
+    def fetch_weather(self, get_hourly=False):
         gc.collect()
         time_url = "http://worldtimeapi.org/api/ip"
         print('fetching weather now...')
@@ -401,27 +412,29 @@ class NetWeather:
             print('  temp: {}'.format(round(wnow['main']['temp'])))
             print('  feels-like: {}'.format(round(wnow['main']['feels_like'])))
             print('    {}'.format(wnow['weather'][0]['description']))
-            print('  wind: {} mph'.format(round(0.621371 * wnow['wind']['speed'])))
+            print('  wind: {} mph'.format(round(2.23694 * wnow['wind']['speed'])))
             self.show_current_temp = round(wnow['main']['temp'])
             self.show_feels_like_temp = round(wnow['main']['feels_like'])
             self.show_icon = wnow['weather'][0]['icon']
-            self.show_wind_mph = round(0.621371 * wnow['wind']['speed'])
+            self.show_wind_mph = round(2.23694 * wnow['wind']['speed'])
             self.updated_hour = time_now.tm_hour
             self.updated_minute = time_now.tm_min
             self.updated_weekday = time_now.tm_wday
             self.updated_month = time_now.tm_mon
             self.updated_monthday =time_now.tm_mday
+            self.got_weather_ok = True
 
-            print('fetching hourly forecast...')
-            weather_one_url = 'http://api.openweathermap.org/data/2.5/onecall?lat={}&lon={}&units=metric&appid={}'.format(lat, lon, secrets['openweather_apikey'])
-            wone = self.fetch_json(weather_one_url)
-            hourly = wone['hourly']
-            for item in hourly:
-                hourly_time = time.localtime(item['dt'] + timezone)
-                out_str = '  {}:{} on {}:'.format(hourly_time.tm_hour, hourly_time.tm_min, days[hourly_time.tm_wday])
-                out_str += ' {}/{}'.format(item['temp'], item['feels_like'])
-                out_str += ' {}'.format(item['weather'][0]['description'])
-                print(out_str)
+            if get_hourly:
+                print('fetching hourly forecast...')
+                weather_one_url = 'http://api.openweathermap.org/data/2.5/onecall?lat={}&lon={}&units=metric&appid={}'.format(lat, lon, secrets['openweather_apikey'])
+                wone = self.fetch_json(weather_one_url)
+                hourly = wone['hourly']
+                for item in hourly:
+                    hourly_time = time.localtime(item['dt'] + timezone)
+                    out_str = '  {}:{} on {}:'.format(hourly_time.tm_hour, hourly_time.tm_min, days[hourly_time.tm_wday])
+                    out_str += ' {}/{}'.format(item['temp'], item['feels_like'])
+                    out_str += ' {}'.format(item['weather'][0]['description'])
+                    print(out_str)
         except:
             print('failed to get weather forecast')
 

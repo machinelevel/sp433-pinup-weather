@@ -57,13 +57,14 @@ import displayio
 if not is_magtag:
     displayio.release_displays()
 
-zipcode = '02210' # This is the zip code it will report weather for
+zipcode = '94114' # This is the zip code it will report weather for
 
 def main():
-    ink = Ink()
-    weather = NetWeather()
-    pixels[0] = (0,0,0)
+    weather = None
     try:
+        ink = Ink()
+        weather = NetWeather()
+        pixels[0] = (0,0,0)
         weather.fetch_weather(get_hourly=False)
         ink.draw_all(weather)
     except:
@@ -71,14 +72,19 @@ def main():
     do_deep_sleep(weather)
 
 def do_deep_sleep(weather):
-    sleep_seconds = 1 * 60
-    if weather is not None and weather.got_weather_ok:
-        current_minute = weather.updated_minute
-        time_till_next_15 = 15 - (current_minute % 15)
-        if time_till_next_15 == 0:
-            time_till_next_15 = 15
-        print('current min {}, so sleep for {} minutes'.format(current_minute, time_till_next_15))
-    time_alarm = alarm.time.TimeAlarm(monotonic_time=time.monotonic() + time_till_next_15 * 60)
+    minutes_till_next_update = 60
+    if 0:
+        # Old time code tried to wake on th e15-min marks BUT our time
+        # comes from weather stations who timestamp at collection, so we get
+        # repeats of the same stamp and wake up too often.
+        if weather is not None and weather.got_weather_ok:
+            current_minute = weather.updated_minute
+            minutes_till_next_update = 15 - (current_minute % 15)
+            if minutes_till_next_update == 0:
+                minutes_till_next_update = 15
+            print('current min {}, so sleep for {} minutes'.format(current_minute, minutes_till_next_update))
+    print(f'SLEEP for {minutes_till_next_update} minutes')
+    time_alarm = alarm.time.TimeAlarm(monotonic_time=time.monotonic() + minutes_till_next_update * 60)
     alarm.exit_and_deep_sleep_until_alarms(time_alarm)
 
 class Ink:
@@ -100,8 +106,13 @@ class Ink:
         if is_magtag:
             self.display = board.DISPLAY
             time.sleep(self.display.time_to_refresh)
+            retry = 0
             while self.display.busy:
-                time.sleep(0.5)
+                if retry > 10:
+                    raise RuntimeError('display init timed out')
+                elif retry > 0:
+                    time.sleep(0.5)
+                retry += 1
         else:
             epd_cs = board.D9
             epd_dc = board.D10
@@ -137,7 +148,6 @@ class Ink:
         self.palette1[3] = 0xffffff
         self.palette1.make_transparent(3)
         print('initialized ink ok.')
-
 #        t8 = tile_from_bmp('/images/icon_suncloud64_8.bmp')
 
     def draw_all(self, weather):
@@ -180,8 +190,13 @@ class Ink:
     def refresh(self):
         self.display.refresh()
         time.sleep(self.display.time_to_refresh)
+        retry = 0
         while self.display.busy:
-            time.sleep(0.5)
+            if retry > 10:
+                raise RuntimeError('display refresh timed out')
+            elif retry > 0:
+                time.sleep(0.5)
+            retry += 1
 
     def draw_weather_icon(self, x, y, weather, g):
         if weather is not None:
@@ -218,7 +233,7 @@ class Ink:
             y = self.draw_number(int(battery_voltage * 100), x, y + 5, self.numbers11, g)
 
 
-    def draw_number(self, val, x, y, font, group, pad0=False):        
+    def draw_number(self, val, x, y, font, group, pad0=False):
         if val is not None:
             strval = str(val)
             if pad0 and val < 10:
@@ -288,10 +303,10 @@ class Ink:
         return numbers
 
 # Magtag pins:
-# ['__class__', 'A1', 'A3', 'ACCELEROMETER_INTERRUPT', 'AD1', 'BATTERY', 
-# 'BUTTON_A', 'BUTTON_B', 'BUTTON_C', 'BUTTON_D', 'CS', 'D1', 'D10', 'D11', 
-# 'D12', 'D13', 'D14', 'D15', 'DISPLAY', 'EPD_BUSY', 'EPD_CS', 'EPD_DC', 
-# 'EPD_RESET', 'I2C', 'LIGHT', 'MISO', 'MOSI', 'NEOPIXEL', 'NEOPIXEL_POWER', 
+# ['__class__', 'A1', 'A3', 'ACCELEROMETER_INTERRUPT', 'AD1', 'BATTERY',
+# 'BUTTON_A', 'BUTTON_B', 'BUTTON_C', 'BUTTON_D', 'CS', 'D1', 'D10', 'D11',
+# 'D12', 'D13', 'D14', 'D15', 'DISPLAY', 'EPD_BUSY', 'EPD_CS', 'EPD_DC',
+# 'EPD_RESET', 'I2C', 'LIGHT', 'MISO', 'MOSI', 'NEOPIXEL', 'NEOPIXEL_POWER',
 # 'SCK', 'SCL', 'SDA', 'SPEAKER', 'SPEAKER_ENABLE', 'SPI', 'VOLTAGE_MONITOR']
 """
 board.A1 board.AD1
@@ -344,7 +359,7 @@ class NetWeather:
                     print("\t%s\t\tRSSI: %d\tChannel: %d" % (str(network.ssid, "utf-8"),
                             network.rssi, network.channel))
                 wifi.radio.stop_scanning_networks()
-             
+
             print("Connecting to %s"%secrets["ssid"])
             wifi.radio.connect(secrets["ssid"], secrets["password"])
             print("Connected to %s!"%secrets["ssid"])
@@ -353,7 +368,7 @@ class NetWeather:
             if 0:
                 ipv4 = ipaddress.ip_address("8.8.4.4")
                 print("Ping google.com: %f ms" % (wifi.radio.ping(ipv4)*1000))
-             
+
             pool = socketpool.SocketPool(wifi.radio)
             self.requests = adafruit_requests.Session(pool, ssl.create_default_context())
 
@@ -372,14 +387,22 @@ class NetWeather:
                 print("\t%s\t\tRSSI: %d" % (str(ap["ssid"], "utf-8"), ap["rssi"]))
 
             print("Connecting to AP...")
+            retry = 0
             while not self.radio.is_connected:
+                if retry > 30:
+                    raise RuntimeError('wifi connect failed')
+                elif retry > 0:
+                    time.sleep(0.5)
+                retry += 1
+
                 try:
                     self.radio.connect_AP(secrets["ssid"], secrets["password"])
                 except RuntimeError as e:
                     print("could not connect to AP, retrying: ", e)
                     continue
-            print("Connected to", str(self.radio.ssid, "utf-8"), "\tRSSI:", self.radio.rssi)
-            print("My IP address is", self.radio.pretty_ip(self.radio.ip_address))
+            if self.radio.is_connected:
+                print("Connected to", str(self.radio.ssid, "utf-8"), "\tRSSI:", self.radio.rssi)
+                print("My IP address is", self.radio.pretty_ip(self.radio.ip_address))
 
     def fetch_text(self, url):
         r = self.requests.get(url)

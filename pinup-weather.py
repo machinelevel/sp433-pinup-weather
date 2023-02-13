@@ -72,7 +72,7 @@ def main():
     do_deep_sleep(weather)
 
 def do_deep_sleep(weather):
-    minutes_till_next_update = 60
+    minutes_till_next_update = 30
     if 0:
         # Old time code tried to wake on th e15-min marks BUT our time
         # comes from weather stations who timestamp at collection, so we get
